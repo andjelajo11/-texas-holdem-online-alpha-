@@ -566,7 +566,8 @@ const init = (socket, io) => {
    * @param {string|null} message - Optional message to broadcast
    * @param {string|null} from - Optional sender identifier
    */
-  function broadcastToTable(table, message = null, from = null) {
+  
+function broadcastToTable(table, message = null, from = null) {
     if (!table || !table.players) {
       return;
     }
@@ -588,27 +589,35 @@ const init = (socket, io) => {
         const seat = table.seats[table.turn];
         if (!seat || seat.player?.socketId !== BOT_SOCKET_ID) return;
         let result;
+
         // Bot strategy: check when free, call to stay in cheaply, fold if broke.
-        // raise pot-sized to apply pressure instead of passively checking/calling.
         // NEW: if the bot holds a pair or better (pokersolver rank >= 2),
+        // raise pot-sized to apply pressure instead of passively checking/calling.
         const Hand = require('pokersolver').Hand;
         let hasPairOrBetter = false;
         try {
-          const holeCards = (seat.hand || []).map((c) => `${c.rank}${c.suit[0].toLowerCase()}`);
-          const boardCards = (table.board || []).map((c) => `${c.rank}${c.suit[0].toLowerCase()}`);
-          const solved = Hand.solve([...holeCards, ...boardCards]);
-          hasPairOrBetter = solved.rank >= 2; // 1=high card, 2=pair, … 9=straight flush
+          const mapCard = (c) => {
+            const rank = c.rank === '10' ? 'T' : c.rank;
+            return rank + c.suit[0];
+          };
+          const holeCards = (seat.hand || []).map(mapCard);
+          const boardCards = (table.board || []).map(mapCard);
+          const allCards = [...holeCards, ...boardCards];
+          if (allCards.length >= 2) {
+            const solved = Hand.solve(allCards);
+            hasPairOrBetter = solved.rank >= 2; // 1=high card, 2=pair, … 9=straight flush
+          }
         } catch (_) {
           // pokersolver needs ≥5 cards; pre-flop it may throw — default to passive
         }
 
-        const minRaise = (table.minBet || 5) * 2;
+        const minRaise = table.minRaise || table.minBet * 2 || 10;
         const raiseAmount = Math.min((table.pot || 0) + minRaise, seat.stack);
         const canRaise = hasPairOrBetter && raiseAmount >= minRaise && seat.stack >= minRaise;
 
         if (canRaise) {
           result = table.handleRaise(BOT_SOCKET_ID, raiseAmount);
-        } else if (table.callAmount === 0 || seat.bet >= table.callAmount) {
+        } else if (!table.callAmount || seat.bet >= table.callAmount) {
           result = table.handleCheck(BOT_SOCKET_ID);
         } else if (seat.stack + seat.bet >= table.callAmount) {
           result = table.handleCall(BOT_SOCKET_ID);
@@ -623,7 +632,7 @@ const init = (socket, io) => {
       }, 2000);
     }
   }
-
+  
   /**
    * Change turn and broadcast updated table state
    * @param {Table} table - Table object
